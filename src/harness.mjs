@@ -31,8 +31,10 @@ function desktopEntry(install) {
   ]) if (exists(entry)) return entry;
   return '';
 }
-function desktopLauncher(absolute) {
-  const install = path.dirname(absolute);
+function desktopLauncher(absolute, install) {
+  // Callers already resolve the install root (the directory holding the .exe);
+  // deriving it from dirname(absolute) again breaks dsh.cmd paths, which sit
+  // four levels below the root.
   const command = desktopExecutable(install);
   const entry = desktopEntry(install);
   if (!command || !entry) return undefined;
@@ -53,7 +55,7 @@ export function resolveLauncher(configured = '') {
     if (/(?:DeepSeek Harness|DSH Desktop)\.exe$/i.test(absolute)) install = path.dirname(absolute);
     if (/dsh\.cmd$/i.test(absolute)) install = path.resolve(path.dirname(absolute), '../../../..');
     if (install) {
-      const launcher = desktopLauncher(absolute);
+      const launcher = desktopLauncher(absolute, install);
       if (launcher) return launcher;
     }
     if (/\.(cmd|bat)$/i.test(absolute)) throw new Error('请选择官方 dsh.cmd、DeepSeek Harness.exe 或 DSH Desktop.exe；不执行任意批处理包装器');

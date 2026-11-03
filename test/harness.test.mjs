@@ -38,6 +38,20 @@ test('keeps resolving legacy DeepSeek Harness app.asar layout', t => {
   });
 });
 
+test('resolves the official dsh.cmd relative to its install root, not the bin directory', t => {
+  const install = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-cmd-'));
+  t.after(() => fs.rmSync(install, { recursive: true, force: true }));
+  const cmd = path.join(install, 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd');
+  const executable = path.join(install, 'DSH Desktop.exe');
+  const archive = path.join(install, 'resources', 'app.asar');
+  touch(cmd); touch(executable); touch(archive);
+  const launcher = resolveLauncher(cmd);
+  assert.equal(launcher.command, executable);
+  assert.deepEqual(launcher.prefix, ['--expose-internals', path.join(archive, 'dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js')]);
+  assert.equal(launcher.env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(launcher.detected, cmd);
+});
+
 test('removes the desktop Host proxy dispatcher flag but preserves proxy endpoints', () => {
   const env = childEnvironment({ env: { ELECTRON_RUN_AS_NODE: '1' } }, 'workspace-write', {
     NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://127.0.0.1:7897',

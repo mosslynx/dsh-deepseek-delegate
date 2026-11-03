@@ -6,17 +6,27 @@ DeepSeek Harness 插件：在原生侧边栏派发和管理任务，通过 stdio
 
 ## 安装
 
-要求 Node.js 22 以上、DeepSeek Harness `>=0.2.1-rc.2 <0.3.0`。当前 CLI 自动检测和进程管理主要面向 Windows。
+要求 DeepSeek Harness `>=0.2.1-rc.2 <0.3.0`。当前 CLI 自动检测和进程管理主要面向 Windows。
+
+**推荐：Harness 内安装。** 打开 Harness 的插件管理页面（侧边栏 → 添加插件），在弹窗中填入：
+
+```text
+https://github.com/mosslynx/dsh-deepseek-delegate.git
+```
+
+也可以填 npm 包名或本机已有的项目目录路径。Harness 会通过自带的 pnpm 完成安装并注册插件，**不需要 Node.js、不需要构建**（仓库自带构建产物）。安装后重启 Harness，在侧边栏选择 **DeepSeek 委派**。
+
+**备选：npm 脚本安装**（适合开发者，需要 Node.js 22 以上）。它通过官方 `dsh plugin --profile desktop add <项目目录>` 链接此目录，并在 desktop profile 下备份依赖清单：
 
 ```powershell
-git clone https://github.com/w402116500/dsh-deepseek-delegate.git
+git clone https://github.com/mosslynx/dsh-deepseek-delegate.git
 cd dsh-deepseek-delegate
 npm ci
 npm run build
 npm run plugin:install
 ```
 
-等待安装命令结束后启动或重启 Harness，在侧边栏选择 **DeepSeek 委派**。安装程序通过官方 `dsh plugin --profile desktop add <项目目录>` 链接此目录，并在 desktop profile 下备份依赖清单。安装后请保留项目目录；移动后需要重新安装，并更新 MCP 路径。
+等待安装命令结束后启动或重启 Harness。安装后请保留项目目录；移动后需要重新安装，并更新 MCP 路径。
 
 CLI 默认从当前 Harness 进程、`DSH_EXECUTABLE`、常见安装位置和 PATH 检测。如果没有找到，可设置环境变量后安装：
 
@@ -178,7 +188,7 @@ test/               集成测试和 CLI fixture
 
 ## 故障排查与卸载
 
-- **cannot resolve profile bundle**：确认安装命令已经成功结束、项目目录仍存在。运行 `npm run plugin:install` 修复链接，然后重启 Harness。
+- **cannot resolve profile bundle**：确认安装已经成功结束、项目目录仍存在。用 Harness 内的插件管理重新安装，或运行 `npm run plugin:install` 修复链接，然后重启 Harness。
 - **页面无法连接**：确认插件已启用；页面会自动重连。更新插件代码后，运行 `npm run build` 并重启 Harness，以载入新版本。
 - **找不到 CLI**：在设置中填入官方 `dsh.cmd`、`DeepSeek Harness.exe` 或 `DSH Desktop.exe` 的绝对路径。
 - **供应商未注册或鉴权失败**：检查设置中的供应商文件和模型路由，以及 Harness 已保存的对应凭据。错误会保留在任务日志里。
