@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPanelApi } from './transport.mjs';
+import { pollDelay } from './poll.mjs';
 
 const PANEL = 'deepseek-delegate';
 const statuses = { queued: '排队中', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
@@ -78,11 +79,20 @@ function Page({ api }) {
   const submission = useRef(null);
   const selection = useRef(null); selection.current = selected;
   useEffect(() => {
-    let disposed = false, pending = false;
+    let disposed = false, pending = false, timer = null;
+    function schedule(tasks) {
+      if (disposed) return;
+      clearTimeout(timer);
+      if (document.hidden) return;
+      timer = setTimeout(refresh, pollDelay(tasks));
+    }
     async function refresh() {
-      if (pending) return; pending = true;
+      if (disposed || document.hidden || pending) return;
+      pending = true;
+      let nextTasks = null;
       try {
         const next = await api(`/api/state?limit=50&offset=${offset}${status ? `&status=${status}` : ''}`);
+        nextTasks = next.tasks;
         if (offset > 0 && offset >= next.taskPage.total) {
           if (!disposed) setOffset(Math.max(0, Math.floor((next.taskPage.total - 1) / 50) * 50));
           return;
@@ -98,10 +108,16 @@ function Page({ api }) {
         }
         if (!disposed) { setState(next); setError(''); if (selection.current === taskId) setDetail(task); }
       } catch (e) { if (!disposed) setError(e.message); }
-      finally { pending = false; }
+      finally { pending = false; schedule(nextTasks); }
     }
-    refresh(); const timer = setInterval(refresh, 1500);
-    return () => { disposed = true; clearInterval(timer); };
+    const onVisibility = () => {
+      if (document.hidden) { clearTimeout(timer); timer = null; return; }
+      clearTimeout(timer);
+      refresh();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    refresh();
+    return () => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); };
   }, [api, offset, status]);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); } }, [notice]);
   async function action(fn) {
