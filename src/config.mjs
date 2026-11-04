@@ -9,8 +9,9 @@ export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'
 export const DATA = path.resolve(process.env.DEEPSEEK_MCP_DATA || path.join(os.homedir(), '.dsh', 'deepseek-delegate'));
 export const DEFAULTS = {
   executable: '', modelRoute: 'codexauv/deepseek-v4.1-flash', reasoningEffort: 'default',
-  cwd: ROOT, reuseSavedAuth: true, timeoutSeconds: 600,
+  cwd: ROOT, reuseSavedAuth: true, timeoutSeconds: 1200,
   permissionMode: 'read-only', maxConcurrent: 1, historyLimit: 1000,
+  allowedRoots: [],
   reuseProviders: true, providerConfigPath: path.join(os.homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml'),
 };
 export function atomicJSON(file, data) {
@@ -39,6 +40,13 @@ export function validateConfig(input) {
   if (!['default', 'off', 'low', 'medium', 'high', 'max'].includes(merged.reasoningEffort)) throw new Error('思考强度无效');
   for (const key of ['cwd', 'executable', 'providerConfigPath']) if (typeof merged[key] !== 'string' || /[\0\r\n]/.test(merged[key])) throw new Error(`${key} 路径无效`);
   if (!path.isAbsolute(merged.cwd) || !fs.statSync(merged.cwd).isDirectory()) throw new Error('工作目录必须是存在的绝对路径');
+  if (!Array.isArray(merged.allowedRoots)) throw new Error('工作目录允许列表必须是数组');
+  merged.allowedRoots = [...new Set(merged.allowedRoots.map(root => {
+    if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('工作目录允许列表必须是绝对路径');
+    try { if (!fs.statSync(root).isDirectory()) throw new Error(); }
+    catch { throw new Error(`工作目录允许列表中的目录不存在：${root}`); }
+    return path.resolve(root);
+  }))];
   if (typeof merged.reuseSavedAuth !== 'boolean') throw new Error('登录复用设置无效');
   if (typeof merged.reuseProviders !== 'boolean') throw new Error('供应商复用设置无效');
   if (!['read-only', 'workspace-write', 'danger-full-access'].includes(merged.permissionMode)) throw new Error('权限模式无效');

@@ -220,6 +220,12 @@ test('wait tool returns concise progress by default and can opt in to complete d
   assert.equal(concise.answer, 'answer:progress');
   assert.equal('events' in concise, false);
   assert.equal('stderr' in concise, false);
+  assert.equal('prompt' in concise, false);
+  assert.equal('cwd' in concise, false);
+  assert.equal('sessionId' in concise, false);
+  assert.equal(concise.resumable, false);
+  assert.ok(Number.isInteger(concise.progress.elapsedSeconds));
+  assert.equal(concise.progress.timeoutSeconds, 1200);
   assert.equal(concise.progress.eventCount, task.events.length);
   assert.deepEqual(concise.progress.latestEvent, task.events.at(-1));
   const full = await callTool(m, 'wait_task', { taskId: task.id, includeLogs: true });
@@ -286,7 +292,7 @@ async function bridge(t, dir, version) {
   });
   const init = await rpc('initialize', { protocolVersion: version });
   assert.equal(init.result.protocolVersion, version);
-  assert.equal(init.result.serverInfo.version, '1.1.0');
+  assert.equal(init.result.serverInfo.version, '1.2.0');
   return rpc;
 }
 

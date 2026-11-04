@@ -7,6 +7,10 @@ const emit = object => process.stdout.write(JSON.stringify(object) + '\n');
 // process reports its own id, so tests can tell a fresh attempt from a resume.
 emit({ type: 'session', sessionId: process.argv[3] || `fixture-session-${process.pid}-${Date.now().toString(36)}` });
 if (mode === 'hang') { setInterval(() => {}, 1000); }
+else if (mode === 'hang-text') {
+  emit({ type: 'text', text: 'partial output before timeout' });
+  setInterval(() => {}, 1000);
+}
 else if (mode === 'error') {
   emit({ type: 'status', phase: 'turn_end', reason: { kind: 'error', error: { message: 'provider rejected' } } });
   emit({ type: 'final', text: '' });

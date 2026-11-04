@@ -76,9 +76,10 @@ test('records and exposes Harness token usage', async t => {
   const m = manager(t, 'usage');
   const result = await finish(m, m.delegate({ prompt: 'measure tokens' }).id);
   const expected = { totalTokens: 1234, inputTokens: 900, outputTokens: 334, thoughtTokens: 80, cachedReadTokens: 12, cachedWriteTokens: 4 };
-  assert.deepEqual(result.usage, expected);
-  assert.deepEqual(m.list()[0].usage, expected);
-  assert.deepEqual(m.usageSummary(), { taskCount: 1, reportedTaskCount: 1, ...expected });
+  const exposed = { ...expected, billableTokens: 1234 };
+  assert.deepEqual(result.usage, exposed);
+  assert.deepEqual(m.list()[0].usage, exposed);
+  assert.deepEqual(m.usageSummary(), { taskCount: 1, reportedTaskCount: 1, ...exposed });
   const stored = JSON.parse(fs.readFileSync(path.join(m.dir, 'tasks.json')));
   assert.deepEqual(stored[0].usage, expected);
   const reloaded = new TaskManager(m.dir, { launch: launcher('usage') });
@@ -101,7 +102,7 @@ test('normalizes real Harness usage names and sums multiple steps', async t => {
   const result = await finish(m, m.delegate({ prompt: 'real usage' }).id);
   assert.deepEqual(result.usage, {
     totalTokens: 210, inputTokens: 130, outputTokens: 60,
-    thoughtTokens: 12, cachedReadTokens: 20, cachedWriteTokens: 0,
+    thoughtTokens: 12, cachedReadTokens: 20, cachedWriteTokens: 0, billableTokens: 190,
   });
 });
 

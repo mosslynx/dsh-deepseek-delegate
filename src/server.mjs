@@ -94,6 +94,8 @@ export async function startServer(dir, { port = 0, launch } = {}) {
     if (method === 'POST' && cancelMatch) return result(manager.cancel(cancelMatch[1]));
     const retryMatch = typeof pathname === 'string' && pathname.match(/^\/api\/tasks\/([\w-]+)\/retry$/);
     if (method === 'POST' && retryMatch) return result(manager.retry(retryMatch[1]), 201);
+    const resumeMatch = typeof pathname === 'string' && pathname.match(/^\/api\/tasks\/([\w-]+)\/resume$/);
+    if (method === 'POST' && resumeMatch) return result(manager.resume(resumeMatch[1], data), 201);
     if (method === 'POST' && pathname === '/api/tool') return result(await callTool(manager, data.name, data.arguments));
     return result({ error: '接口不存在' }, 404);
   }

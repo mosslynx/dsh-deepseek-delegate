@@ -8,3 +8,5 @@
 .dd-metadata b{font-weight:650;color:var(--dd-ink)}
 .dd-task-usage,.dd-usage-summary{color:var(--dd-muted);font-size:11px}
 .dd-task-filter{display:flex;align-items:center;gap:8px;margin:0 4px 12px;color:var(--dd-muted);font-size:12px}.dd-task-filter select{min-width:0;flex:1;background:var(--dd-panel);border:1px solid var(--dd-line);border-radius:6px;padding:5px}.dd-pagination{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:16px 4px 4px;font-size:11px;color:var(--dd-muted)}.dd-pagination button{padding:5px 7px;font-size:11px}
+.dd-root .dd-resume{border:1px solid var(--dd-line);border-radius:10px;padding:20px 22px;margin:18px 0 24px;background:rgba(124,156,255,.04)}
+.dd-root .dd-resume textarea{min-height:110px}

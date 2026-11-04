@@ -125,12 +125,14 @@ export function spawnHarness(config, overlayPath, sessionId) {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
-export function stopTree(child) {
+export function stopTree(child, { force = true } = {}) {
   if (!child?.pid || child.exitCode !== null) return;
   if (process.platform === 'win32') {
-    const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    const args = ['/PID', String(child.pid), '/T', ...(force ? ['/F'] : [])];
+    const killer = spawn('taskkill.exe', args, { windowsHide: true, stdio: 'ignore' });
     killer.on('error', () => child.kill());
   } else {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+    const signal = force ? 'SIGKILL' : 'SIGTERM';
+    try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already gone */ } }
   }
 }

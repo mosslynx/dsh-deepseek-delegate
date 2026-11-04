@@ -48,7 +48,7 @@ npm run plugin:install
 
 续聊任务可能收到 Harness 按会话累计的 usage，因此侧边栏的累计值适合比较独立任务；把同一会话的多次续聊直接相加可能重复计算。
 
-默认只读、单任务并发、600 秒超时，最多保留 1000 条已结束任务。后台任务无法处理交互审批，因此审批策略为 `never`，文件访问仍由所选 Harness 沙箱模式控制。允许写入后，任务可能使用工具修改工作目录。
+默认只读、单任务并发、1200 秒超时，最多保留 1000 条已结束任务。后台任务无法处理交互审批，因此审批策略为 `never`，文件访问仍由所选 Harness 沙箱模式控制。允许写入后，任务可能使用工具修改工作目录。
 
 第三方供应商默认从 `~/.dsh/profiles/desktop/cordis.patch.yml` 的 `llm-pi-ai` 配置读取。只引入供应商声明，凭据由 Harness 自己加载。请先确认相同路由能在 Harness 中使用。
 
@@ -77,21 +77,22 @@ DEEPSEEK_MCP_DATA = "/absolute/path/to/delegate-data"
 
 | 工具 | 用途 |
 | --- | --- |
-| `delegate_to_deepseek` | 立即返回任务 ID；传入 `continueTaskId` 可续聊；可用 `reasoningEffort` 覆盖本次思考强度、`idempotencyKey` 防重复派发 |
-| `get_task` | 获取状态、回答、会话 ID 和日志 |
-| `wait_task` | 默认等待最多 30 秒；返回回答和进度摘要，`includeLogs: true` 可包含完整诊断；仍在排队/运行时可再次调用 |
+| `delegate_to_deepseek` | 立即返回任务 ID；传入 `continueTaskId` 可续聊；可用 `reasoningEffort` 覆盖思考强度、`timeoutSeconds` 覆盖本次超时、`idempotencyKey` 防重复派发 |
+| `get_task` | 获取完整状态、提示、回答、会话 ID、Token 用量和日志 |
+| `wait_task` | 默认等待最多 30 秒；只返回状态、回答、`partialAnswer`、用量和 `progress`，不含 prompt/cwd/日志；`includeLogs: true` 可显式取日志 |
+| `resume_task` | 续跑超时或中断的任务，复用原会话；可选 `prompt`、`timeoutSeconds`、`idempotencyKey` |
 | `cancel_task` | 取消任务，并终止该任务拥有的进程树 |
-| `retry_task` | 手动重试失败或中断的任务，返回新任务 ID |
+| `retry_task` | 手动重试失败或中断的任务，返回新任务 ID（全新会话） |
 | `list_tasks` | 分页列出任务摘要；支持 `limit`、`offset`、`status` |
 | `get_deepseek_settings` | 读取委派设置 |
 
-示例参数（省略 `reasoningEffort` 时使用管理页面的默认设置；传入 `default` 时跟随模型/供应商默认。可选值：`default`、`off`、`low`、`medium`、`high`、`max`）：
+示例参数（省略 `reasoningEffort` 时使用管理页面的默认设置；传入 `default` 时跟随模型/供应商默认。可选值：`default`、`off`、`low`、`medium`、`high`、`max`；`timeoutSeconds` 范围 10–3600，省略时使用设置值）：
 
 ```json
-{"prompt":"分析此项目的入口和主要模块，不修改文件。","cwd":"/absolute/path/to/workspace","reasoningEffort":"high"}
+{"prompt":"分析此项目的入口和主要模块，不修改文件。","cwd":"/absolute/path/to/workspace","reasoningEffort":"high","timeoutSeconds":1800}
 ```
 
-MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。关闭或重启 Harness 后，下次调用会重新读取服务地址。失败或中断任务不会自动重试；重新派发前应先检查日志和工作目录。
+MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。关闭或重启 Harness 后，下次调用会重新读取服务地址。超时或服务重启中断的任务可以用 `resume_task` 在原会话继续；普通失败使用 `retry_task` 开启新会话；两者都不会自动触发。重新派发前应先检查日志和工作目录。
 
 ### 防重复派发
 
@@ -102,9 +103,9 @@ MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。�
 ```
 
 - 同一数据目录内，相同键与相同参数返回原任务及当前状态，不新增任务、不重新启动 CLI；插件重启后也有效。
-- 同一键传入不同提示、工作目录、续聊来源或思考强度会报错；需要开展新工作时使用新键。
-- 未传工作目录或思考强度时，重发不会因默认设置已改变而创建另一项任务，仍返回第一次提交时的执行快照。
-- 不传键仍允许重复提示创建多个独立任务。失败或中断后使用相同键，也只会取回原失败任务；真正重试仍需调用 `retry_task`。
+- 同一键传入不同提示、工作目录、续聊来源、思考强度或超时会报错；需要开展新工作时使用新键。
+- 未传工作目录、思考强度或超时时，重发不会因默认设置已改变而创建另一项任务，仍返回第一次提交时的执行快照。
+- 不传键仍允许重复提示创建多个独立任务。超时后可用 `resume_task` 继续原会话；普通失败使用 `retry_task` 开启新任务。
 - 键与请求指纹以 SHA-256 摘要写在任务记录里，不保存键原文或为了去重额外保存未脱敏提示。**幂等保护只覆盖仍保留的任务记录**；历史清理会同时移除对应键，清理后再用旧键会创建新任务。不要把它作为永久的业务执行锁。
 
 管理页面提交任务也会在响应失败后保留当前请求的键；不改动任务参数直接再次点击派发，会取回同一任务。
@@ -121,7 +122,7 @@ MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。�
 
 协商 MCP `2025-06-18` 或更新版本时，工具定义提供 `outputSchema`，成功调用同时返回 `structuredContent` 和内容相同的 JSON 文本。使用旧版协议的客户端仍收到 JSON 文本结果，不附加不受其版本支持的字段。工具执行错误保持 `isError: true`，不会伪装成符合成功 schema 的结果。
 
-`wait_task` 默认长轮询 30000 毫秒，`timeoutMs` 可设置为 0–30000。运行中的任务不会因一次日志更新就结束等待；等待到终态或超时后返回回答与 `progress`：事件条数、最近一条事件和排队位置（排队时从 1 起，其他状态为 `null`）。默认省略完整 `events`、`stderr`，避免每次等待都重复返回执行日志；需要排查时使用 `get_task` 或 `includeLogs: true`。这些优化减少客户端往返和重复结果，不承诺提高模型上游的缓存命中率。
+`wait_task` 默认长轮询 30000 毫秒，`timeoutMs` 可设置为 0–30000。运行中的任务不会因一次日志更新就结束等待；等待到终态或超时后只返回 `id`、`status`、`answer`、`partialAnswer`、`error`、`errorCode`、`usage`、`contextUsage`、`resumable` 和 `progress`，不再重复返回 prompt、cwd、sessionId。`progress` 包含事件条数、最近一条事件、排队位置、已运行秒数和任务超时。默认省略完整 `events`、`stderr`；需要排查时使用 `get_task`，或显式传 `includeLogs: true`。这些优化减少客户端往返和重复结果，不承诺提高模型上游的缓存命中率。
 
 ### 历史保留
 
@@ -129,11 +130,25 @@ MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。�
 
 旧配置中没有此字段时也使用默认值；升级前如果需要完整保留已有记录，可先在 `config.json` 加入 `"historyLimit": 0`。要长期保存记录，请备份数据目录。界面 Token 汇总只统计当前仍保留的记录，不作为全量历史账单；清理不会删除 Harness 原生会话，也不会更改任务曾经修改过的工作文件。
 
+### 超时与续跑
+
+任务默认超时 1200 秒，可在设置或 `delegate_to_deepseek` 的 `timeoutSeconds` 覆盖（10–3600）。到点先优雅终止，5 秒未退出再强杀；任务标 `failed` + `errorCode: "timeout"`，保留 `sessionId`，并把最后一段 `text` 存为 `partialAnswer`，`answer` 保持为空。
+
+- `resume_task` 只接受 `failed + errorCode=timeout` 或 `interrupted` 且有 `sessionId` 的任务；`cancelled`、`completed` 和普通失败拒绝。
+- 续跑新建一条任务，`continueTaskId` 指向原任务，复用原会话、模型、目录、权限和提示快照；`prompt` 省略时使用默认续跑文案，`timeoutSeconds` 省略时继承原任务。
+- 同一会话已有活跃任务会被拒绝；相同 `idempotencyKey` 与相同参数会返回原续跑任务。续跑失败时新任务标 `failed`，请改用 `retry_task`。
+- 管理页面对超时/中断任务显示「继续运行」，对普通失败显示「重试任务」；已完成任务仍用「继续对话」。
+- 如果 CLI 拒绝恢复被强杀的会话，续跑任务会失败并提示改用 `retry_task`，不会自动重派。
+
+```json
+{"taskId":"3a6af931-...","prompt":"继续完成原型，不要重复已完成的工作","timeoutSeconds":1800}
+```
+
 ### 手动重试
 
 `retry_task`（界面上是任务详情里的「重试任务」按钮）不会自动触发，也不会被任何超时或失败路径调用：
 
-- 只有 `failed` 和 `interrupted` 可以重试。`queued`、`running`、`completed`、`cancelled` 一律返回错误，不会创建任务或启动进程；已完成的任务请用 `continueTaskId` 续聊。
+- 只有 `failed` 和 `interrupted` 可以重试。`queued`、`running`、`completed`、`cancelled` 一律返回错误，不会创建任务或启动进程；已完成的任务请用 `continueTaskId` 续聊。超时或中断的任务优先用 `resume_task` 续跑；`retry_task` 始终开启新会话。
 - 重试会新建一个任务并返回新的任务 ID。原任务的状态、回答和日志保持不变，重试任务用 `retryOf` 指向原任务，用 `attempt` 记录尝试次数（原任务为 1，第一次重试为 2）。
 - 新任务复制原任务的执行快照：提示、`cwd`、`modelRoute`、思考强度、`permissionMode`、超时和供应商设置都取自原任务，而不是当前设置。提示来自已持久化的记录，因此是脱敏后的文本。
 - 重试始终是一次全新的执行尝试：它不会带上原任务的 `sessionId`，也不会用 `continueTaskId` 续聊。
@@ -143,10 +158,12 @@ MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。�
 
 默认数据目录是 `~/.dsh/deepseek-delegate`，可用 `DEEPSEEK_MCP_DATA` 修改。插件和 MCP 需要使用同一目录。
 
-- `config.json`：委派设置。
-- `tasks.json`：任务及结果，包含提示、回答、执行日志、Harness Token 用量，以及重试关系（`retryOf`、`attempt`）。
+- `config.json`：委派设置，包括默认超时和可选的 `allowedRoots` 工作区允许列表。
+- `tasks.json`：任务及结果，包含提示、回答、`partialAnswer`、执行日志、Harness Token 用量、`errorCode`，以及续聊/续跑/重试关系（`continueTaskId`、`retryOf`、`attempt`）。
 - `runtime.json`：运行时本地地址和随机连接令牌，关闭插件时清理。
 - `server.lock/`：防止同一数据目录被重复使用。
+
+`usage.totalTokens` 是累计处理量，包含缓存读取；`usage.billableTokens` 才是输入加输出的新增 Token，界面和侧边栏汇总使用后者。`allowedRoots` 为空时不限制工作目录；非空时 `delegate`、`resume` 和 `retry` 的目录必须落在其中一个根目录下。
 
 任务记录对常见密钥格式进行脱敏，但不应依赖它保存任意敏感数据。临时运行 patch 在任务结束后删除。外部 MCP 通过仅监听 `127.0.0.1`、要求随机令牌的 HTTP 通道连接插件。管理界面使用 Harness 自带的认证连接通道；重新启用插件或重启 Host 后会自动恢复连接。
 
@@ -157,7 +174,7 @@ npm run build
 npm test
 ```
 
-测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。`test/retry.test.mjs` 另外覆盖：失败和中断任务可手动重试、其他状态被拒绝且不启动进程、重试复制执行快照、重试不继承原会话、重试关系持久化重启后仍可见，以及 `retry_task` 在 MCP 与面板接口上的一致性。
+测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。`test/retry.test.mjs` 另外覆盖：失败和中断任务可手动重试、其他状态被拒绝且不启动进程、重试复制执行快照、重试不继承原会话、重试关系持久化重启后仍可见，以及 `retry_task` 在 MCP 与面板接口上的一致性。`test/timeout-resume.test.mjs` 覆盖按任务超时、超时状态与 `partialAnswer`、原会话续跑、续跑拒绝与幂等、3 秒落盘、`allowedRoots` 以及 `wait_task` 的精简投影。
 
 `test/task-features.test.mjs` 覆盖幂等重发与冲突、设置变更及重启后的幂等保护、满队列重发、分页筛选与摘要限制、历史上限及运行任务保护、精简等待结果，以及新旧 MCP 协议的结构化返回兼容性。这些测试使用临时目录和本地 CLI fixture，不调用模型。
 
@@ -194,6 +211,7 @@ test/               集成测试和 CLI fixture
 - **找不到 CLI**：在设置中填入官方 `dsh.cmd`、`DeepSeek Harness.exe` 或 `DSH Desktop.exe` 的绝对路径。
 - **供应商未注册或鉴权失败**：检查设置中的供应商文件和模型路由，以及 Harness 已保存的对应凭据。错误会保留在任务日志里。
 - **服务已在运行**：同一数据目录只能启用一个实例。正常退出旧实例后重试；不要在进程仍运行时手动删除锁目录。
+- **Codex 调到了其他 MCP 的同名工具**：如果同时使用 Codex++，它的 `codex_plus_collaboration` 也会暴露 `delegate_to_deepseek`、`wait_task` 等同名工具，且不会写入本插件队列。确认调用的是 `mcp__deepseek_delegate__*`；不需要 Codex++ 的协作工具时，在 Codex 的 `config.toml` 里给对应 server 加 `enabled = false`。
 
 ```powershell
 npm run plugin:uninstall
