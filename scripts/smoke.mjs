@@ -5,6 +5,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { ROOT } from '../src/config.mjs';
 import { ensureServer, request } from '../src/client.mjs';
+import { TOOLS } from '../src/protocol.mjs';
 
 // This uses the real configured provider. Prompts request no tools or file access.
 const runtime = await ensureServer();
@@ -56,17 +57,19 @@ const owned = new Set();
 try {
   const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'plugin-smoke', version: '1.0.0' } });
   assert.equal(init.serverInfo.name, 'deepseek-delegate');
-  const tools = await rpc('tools/list', {}); assert.equal(tools.tools.length, 7);
+  const tools = await rpc('tools/list', {}); assert.equal(tools.tools.length, TOOLS.length);
   const nonce = randomBytes(8).toString('hex');
   const first = await tool('delegate_to_deepseek', { prompt: `这是连通性测试。不要调用工具，不要读取或修改文件。请记住口令 ${nonce}，只回复 DEEPSEEK_PLUGIN_OK。` });
   owned.add(first.id);
   const answer = await completed(first.id);
-  assert.match(answer.answer, /DEEPSEEK_PLUGIN_OK/); assert.ok(answer.sessionId);
+  const firstFull = await tool('get_task', { taskId: first.id });
+  assert.match(answer.answer, /DEEPSEEK_PLUGIN_OK/); assert.ok(firstFull.sessionId);
   console.log(`PASS: MCP delegation completed (${answer.id})`);
-  const follow = await tool('delegate_to_deepseek', { prompt: '不要调用工具，不要读取或修改文件。上一条消息要求你记住的口令是什么？只回复口令。', cwd: answer.cwd, continueTaskId: answer.id });
+  const follow = await tool('delegate_to_deepseek', { prompt: '不要调用工具，不要读取或修改文件。上一条消息要求你记住的口令是什么？只回复口令。', cwd: firstFull.cwd, continueTaskId: answer.id });
   owned.add(follow.id);
   const continued = await completed(follow.id);
-  assert.equal(continued.sessionId, answer.sessionId); assert.ok(continued.answer.includes(nonce), 'Native session must remember the first turn');
+  const continuedFull = await tool('get_task', { taskId: continued.id });
+  assert.equal(continuedFull.sessionId, firstFull.sessionId); assert.ok(continued.answer.includes(nonce), 'Native session must remember the first turn');
   console.log(`PASS: native session continuation (${continued.id})`);
   const cancel = await tool('delegate_to_deepseek', { prompt: '取消测试。不要调用工具，不要读取或修改文件。请解释二分查找。' });
   owned.add(cancel.id);
