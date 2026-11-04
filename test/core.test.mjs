@@ -178,6 +178,68 @@ test('disabling during plugin startup drains the listener before another activat
   await apply(host.ctx, { dataDir: dir });
   assert.equal((await createPanelApi(() => host.connection)('/api/ping')).ok, true);
 });
+test('recovers a stale lock without an owner', async t => {
+  const dir = directory(t), lock = path.join(dir, 'server.lock');
+  fs.mkdirSync(lock);
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(lock, past, past);
+  const app = await startServer(dir, { launch: launcher('ok'), lockGraceMs: 0 });
+  t.after(() => app.close());
+  const owner = JSON.parse(fs.readFileSync(path.join(lock, 'owner.json'), 'utf8'));
+  assert.equal(owner.pid, process.pid);
+  assert.ok(owner.startedAt);
+});
+
+test('recovers a stale lock with a corrupt owner file', async t => {
+  const dir = directory(t), lock = path.join(dir, 'server.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner.json'), '{not-json');
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(lock, past, past);
+  const app = await startServer(dir, { launch: launcher('ok'), lockGraceMs: 0 });
+  t.after(() => app.close());
+  assert.equal(JSON.parse(fs.readFileSync(path.join(lock, 'owner.json'), 'utf8')).pid, process.pid);
+});
+
+test('recovers a lock owned by a dead pid', async t => {
+  const dir = directory(t), lock = path.join(dir, 'server.lock');
+  const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true });
+  await once(child, 'exit');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({ pid: child.pid, startedAt: new Date().toISOString() }));
+  const app = await startServer(dir, { launch: launcher('ok'), lockGraceMs: 0 });
+  t.after(() => app.close());
+  assert.equal(JSON.parse(fs.readFileSync(path.join(lock, 'owner.json'), 'utf8')).pid, process.pid);
+});
+
+test('keeps an active lock even when startedAt is old', async t => {
+  const dir = directory(t), lock = path.join(dir, 'server.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, startedAt: new Date(0).toISOString() }));
+  await assert.rejects(startServer(dir, { launch: launcher('ok') }), /已在运行/);
+});
+
+test('rejects a freshly created lock without an owner during the grace period', async t => {
+  const dir = directory(t), lock = path.join(dir, 'server.lock');
+  fs.mkdirSync(lock);
+  await assert.rejects(startServer(dir, { launch: launcher('ok') }), /已在运行/);
+});
+
+test('ignores non-JSON harness banner lines and still completes', async t => {
+  const m = manager(t, 'noise');
+  const task = await finish(m, m.delegate({ prompt: 'noise' }).id);
+  assert.equal(task.status, 'completed');
+  assert.equal(task.answer, 'answer:noise');
+  assert.match(task.stderr, /banner: starting harness/);
+});
+
+test('malformed JSON output still fails the task', async t => {
+  const m = manager(t, 'bad-json');
+  const task = await finish(m, m.delegate({ prompt: 'bad' }).id);
+  assert.equal(task.status, 'failed');
+  assert.match(task.error, /不是有效 JSON/);
+});
+
 test('loopback API requires bearer and rejects hostile origins', async t => {
   const dir = directory(t), app = await startServer(dir, { launch: launcher('ok') }); t.after(() => app.close());
   app.manager.settings({ cwd: dir, reuseProviders: false });

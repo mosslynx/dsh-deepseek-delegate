@@ -346,8 +346,16 @@ export class TaskManager extends EventEmitter {
       raw = raw.replace(/\r$/, ''); if (!raw.trim()) return;
       let ev;
       try { ev = JSON.parse(raw); } catch {
-        if (/^\[llm-deepseek-account\] model listing from https?:\/\/\S+ loaded \d+ model\(s\), skipped \d+ row\(s\)$/.test(raw)) return;
-        failure ||= `CLI 输出不是有效 JSON：${redact(raw).slice(0, 600)}`; return;
+        const trimmed = raw.trimStart();
+        const looksLikeJson = trimmed.startsWith('{') || /^\[\s*[{"]/.test(trimmed);
+        if (looksLikeJson) {
+          failure ||= `CLI 输出不是有效 JSON：${redact(raw).slice(0, 600)}`;
+        } else {
+          // Harness may print banners/logs to stdout before the JSON stream.
+          // Keep them as diagnostics instead of failing the whole task.
+          t.stderr = (t.stderr + `\n[stdout] ${redact(raw).slice(0, 600)}`).slice(-8192);
+        }
+        return;
       }
       if (!ev || typeof ev !== 'object') { failure ||= 'CLI 返回无效事件'; return; }
       if (ev.type === 'session') t.sessionId = ev.sessionId || ev.session_id || t.sessionId;

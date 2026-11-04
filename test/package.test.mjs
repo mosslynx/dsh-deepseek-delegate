@@ -22,3 +22,33 @@ test('MCP integration config prefers the bundled entry', () => {
   assert.match(toml, /lib\/cli\.js/);
   assert.match(json, /lib\/cli\.js/);
 });
+
+test('MCP integration config uses the current Node binary', () => {
+  const { toml, json, source } = integrationConfig(path.join(ROOT, 'data-test'), {
+    execPath: 'C:/Program Files/nodejs/node.exe', electron: false,
+  });
+  assert.equal(source, 'node');
+  assert.match(toml, /command = "C:\/Program Files\/nodejs\/node\.exe"/);
+  assert.doesNotMatch(toml, /ELECTRON_RUN_AS_NODE/);
+  const parsed = JSON.parse(json);
+  assert.equal(parsed.mcpServers.deepseek_delegate.command, 'C:/Program Files/nodejs/node.exe');
+  assert.equal(parsed.mcpServers.deepseek_delegate.env.ELECTRON_RUN_AS_NODE, undefined);
+});
+
+test('MCP integration config runs Electron as Node', () => {
+  const { toml, json, source } = integrationConfig(path.join(ROOT, 'data-test'), {
+    execPath: 'C:/DeepSeekHarness/DeepSeek Harness.exe', electron: true,
+  });
+  assert.equal(source, 'electron');
+  assert.match(toml, /ELECTRON_RUN_AS_NODE = "1"/);
+  const parsed = JSON.parse(json);
+  assert.equal(parsed.mcpServers.deepseek_delegate.command, 'C:/DeepSeekHarness/DeepSeek Harness.exe');
+  assert.equal(parsed.mcpServers.deepseek_delegate.env.ELECTRON_RUN_AS_NODE, '1');
+});
+
+test('MCP integration config does not reuse an unrelated executable', () => {
+  const { source } = integrationConfig(path.join(ROOT, 'data-test'), {
+    execPath: 'C:/weird/app.exe', electron: false,
+  });
+  assert.ok(['path', 'missing'].includes(source));
+});

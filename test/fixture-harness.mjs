@@ -11,6 +11,17 @@ else if (mode === 'hang-text') {
   emit({ type: 'text', text: 'partial output before timeout' });
   setInterval(() => {}, 1000);
 }
+else if (mode === 'noise') {
+  process.stdout.write('banner: starting harness\n');
+  process.stdout.write('[llm-deepseek-account] model listing from http://127.0.0.1 loaded 1 model(s), skipped 0 row(s)\n');
+  emit({ type: 'text', text: 'noise ok' });
+  emit({ type: 'status', phase: 'turn_end', reason: { kind: 'completed' } });
+  emit({ type: 'final', text: `answer:${prompt}` });
+}
+else if (mode === 'bad-json') {
+  process.stdout.write('{oops\n');
+  setTimeout(() => { process.exitCode = 1; }, 20);
+}
 else if (mode === 'error') {
   emit({ type: 'status', phase: 'turn_end', reason: { kind: 'error', error: { message: 'provider rejected' } } });
   emit({ type: 'final', text: '' });

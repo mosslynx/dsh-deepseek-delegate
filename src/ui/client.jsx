@@ -60,6 +60,9 @@ function Integration({ state, onNotice }) {
     <ol className="dd-steps"><li>保持 Harness 运行，并启用本插件。</li><li>将下面的配置加入 Codex 的 <code>config.toml</code>。</li><li>重新加载 Codex 的 MCP 连接，在新对话中测试工具。</li></ol>
     <div className="dd-code-head"><div className="dd-switch"><button aria-pressed={format === 'toml'} onClick={() => setFormat('toml')}>Codex · TOML</button><button aria-pressed={format === 'json'} onClick={() => setFormat('json')}>通用 JSON</button></div><button onClick={copy}>复制配置</button></div>
     <pre className="dd-code" tabIndex="0">{state.integration[format]}</pre>
+    {state.integration.source === 'missing' && <pre className="dd-error">未找到可用的 Node.js，生成的 MCP 配置无法启动。请安装 Node.js 22+，或使用 Harness 桌面版自带的运行时。</pre>}
+    {state.integration.source === 'electron' && <p className="dd-subtle">当前使用 Harness 自带的 Electron 运行时，不需要额外安装 Node.js。</p>}
+    {state.integration.source === 'path' && <p className="dd-subtle">当前使用 PATH 中找到的 Node.js；升级或移动 Node 后需要重新复制配置。</p>}
     <h3>可用工具</h3><div className="dd-tools">{[['delegate_to_deepseek', '派发任务或续聊'], ['wait_task', '等待任务完成'], ['get_task', '读取回答与日志'], ['cancel_task', '取消任务'], ['retry_task', '手动重试失败或中断的任务'], ['resume_task', '在超时/中断的原会话中继续'], ['list_tasks', '查看任务列表'], ['get_deepseek_settings', '读取当前设置']].map(([name, label]) => <div key={name}><code>{name}</code><span>{label}</span></div>)}</div>
     <p className="dd-subtle">MCP 与这里共用任务记录。关闭 Harness 会中断任务，连接程序会在下次调用时重新寻找插件。</p>
   </div>;

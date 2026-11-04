@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { ROOT, VERSION, atomicJSON, loadJSON, redact } from './config.mjs';
+import { ROOT, VERSION, atomicJSON, redact } from './config.mjs';
 import { TaskManager } from './tasks.mjs';
 import { resolveLauncher, availableRoutes } from './harness.mjs';
 import { callTool } from './protocol.mjs';
@@ -13,19 +13,44 @@ function nodeCommand() {
     const candidate = path.join(dir, executable);
     if (fs.existsSync(candidate)) return candidate.replaceAll('\\', '/');
   }
-  return 'node';
+  return '';
 }
-export function integrationConfig(dir) {
-  const command = nodeCommand();
+function isNodeBinary(file) {
+  return /(^|[\\/])node(?:\.exe)?$/i.test(file);
+}
+export function runtimeCommand({ execPath = process.execPath, electron = Boolean(process.versions.electron) } = {}) {
+  if (electron) return { command: execPath, env: { ELECTRON_RUN_AS_NODE: '1' }, source: 'electron' };
+  if (isNodeBinary(execPath)) return { command: execPath, env: {}, source: 'node' };
+  const found = nodeCommand();
+  return found ? { command: found, env: {}, source: 'path' } : { command: 'node', env: {}, source: 'missing' };
+}
+export function integrationConfig(dir, options = {}) {
+  const runtime = runtimeCommand(options);
   // Prefer the bundled MCP entry: a linked install (cloned or unzipped folder)
   // has no node_modules, so src/cli.mjs cannot resolve the yaml dependency.
   const bundled = path.join(ROOT, 'lib/cli.js');
   const entry = (fs.existsSync(bundled) ? bundled : path.join(ROOT, 'src/cli.mjs')).replaceAll('\\', '/');
-  const env = { DEEPSEEK_MCP_DATA: dir.replaceAll('\\', '/') };
+  const env = { DEEPSEEK_MCP_DATA: dir.replaceAll('\\', '/'), ...runtime.env };
+  const envToml = Object.entries(env).map(([key, value]) => `${key} = ${JSON.stringify(value)}`).join('\n');
   return {
-    toml: `[mcp_servers.deepseek_delegate]\ncommand = ${JSON.stringify(command)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 60\n\n[mcp_servers.deepseek_delegate.env]\nDEEPSEEK_MCP_DATA = ${JSON.stringify(env.DEEPSEEK_MCP_DATA)}\n`,
-    json: JSON.stringify({ mcpServers: { deepseek_delegate: { command, args: [entry, 'mcp'], env } } }, null, 2),
+    toml: `[mcp_servers.deepseek_delegate]\ncommand = ${JSON.stringify(runtime.command)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 60\n\n[mcp_servers.deepseek_delegate.env]\n${envToml}\n`,
+    json: JSON.stringify({ mcpServers: { deepseek_delegate: { command: runtime.command, args: [entry, 'mcp'], env } } }, null, 2),
+    source: runtime.source,
   };
+}
+function lockState(lock, { graceMs = 10000 } = {}) {
+  if (!fs.existsSync(lock)) return 'free';
+  let owner = null;
+  try { owner = JSON.parse(fs.readFileSync(path.join(lock, 'owner.json'), 'utf8')); }
+  catch { owner = null; }
+  if (owner && Number.isSafeInteger(owner.pid) && owner.pid > 0) {
+    try { process.kill(owner.pid, 0); return 'active'; }
+    catch (e) { return e.code === 'EPERM' ? 'active' : 'stale'; }
+  }
+  let age = Infinity;
+  try { age = Date.now() - fs.statSync(lock).mtimeMs; }
+  catch { return 'free'; }
+  return age > graceMs ? 'stale' : 'starting';
 }
 function safeEqual(a, b) {
   const ab = Buffer.from(a || ''); const bb = Buffer.from(b || '');
@@ -42,19 +67,21 @@ async function body(req) {
   for await (const chunk of req) { size += chunk.length; if (size > 100000) throw new Error('请求过大'); chunks.push(chunk); }
   return JSON.parse(Buffer.concat(chunks).toString() || '{}');
 }
-export async function startServer(dir, { port = 0, launch } = {}) {
+export async function startServer(dir, { port = 0, launch, lockGraceMs = 10000 } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const lock = path.join(dir, 'server.lock');
   try { fs.mkdirSync(lock); }
   catch (e) {
     if (e.code !== 'EEXIST') throw e;
-    const owner = loadJSON(path.join(lock, 'owner.json'), null);
-    let alive = !owner;
-    if (owner) { try { process.kill(owner.pid, 0); alive = true; } catch { alive = false; } }
-    if (alive) throw new Error('DeepSeek 委派插件已在运行或正在启动');
-    fs.rmSync(lock, { recursive: true, force: true }); fs.mkdirSync(lock);
+    if (lockState(lock, { graceMs: lockGraceMs }) !== 'stale') throw new Error('DeepSeek 委派插件已在运行或正在启动');
+    fs.rmSync(lock, { recursive: true, force: true });
+    try { fs.mkdirSync(lock); }
+    catch (again) {
+      if (again.code === 'EEXIST') throw new Error('DeepSeek 委派插件已在运行或正在启动');
+      throw again;
+    }
   }
-  atomicJSON(path.join(lock, 'owner.json'), { pid: process.pid });
+  atomicJSON(path.join(lock, 'owner.json'), { pid: process.pid, startedAt: new Date().toISOString() });
   let manager;
   try { manager = new TaskManager(dir, { launch }); }
   catch (e) { fs.rmSync(lock, { recursive: true, force: true }); throw e; }

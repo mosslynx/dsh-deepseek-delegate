@@ -75,6 +75,8 @@ DEEPSEEK_MCP_DATA = "/absolute/path/to/delegate-data"
 
 路径以本机生成的配置为准。重新加载客户端的 MCP 连接，或在新对话中验证工具。插件不自动修改 Codex 配置。
 
+生成的配置会优先使用当前 Harness 运行时：桌面版写入 `DeepSeek Harness.exe` + `ELECTRON_RUN_AS_NODE=1`，不需要系统 Node；只有回退到 PATH 时才使用 `node`，此时需要 Node.js 22+。
+
 | 工具 | 用途 |
 | --- | --- |
 | `delegate_to_deepseek` | 立即返回任务 ID；传入 `continueTaskId` 可续聊；可用 `reasoningEffort` 覆盖思考强度、`timeoutSeconds` 覆盖本次超时、`idempotencyKey` 防重复派发 |
@@ -174,7 +176,9 @@ npm run build
 npm test
 ```
 
-测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。`test/retry.test.mjs` 另外覆盖：失败和中断任务可手动重试、其他状态被拒绝且不启动进程、重试复制执行快照、重试不继承原会话、重试关系持久化重启后仍可见，以及 `retry_task` 在 MCP 与面板接口上的一致性。`test/timeout-resume.test.mjs` 覆盖按任务超时、超时状态与 `partialAnswer`、原会话续跑、续跑拒绝与幂等、3 秒落盘、`allowedRoots` 以及 `wait_task` 的精简投影。
+CI 在 Windows + Node 24 上运行 `npm ci`、`npm test`、`npm run build`，并用 `git diff --ignore-space-at-eol --exit-code -- lib` 校验构建产物；不跑 lifecycle/smoke。
+
+测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。`test/retry.test.mjs` 另外覆盖：失败和中断任务可手动重试、其他状态被拒绝且不启动进程、重试复制执行快照、重试不继承原会话、重试关系持久化重启后仍可见，以及 `retry_task` 在 MCP 与面板接口上的一致性。`test/timeout-resume.test.mjs` 覆盖按任务超时、超时状态与 `partialAnswer`、原会话续跑、续跑拒绝与幂等、3 秒落盘、`allowedRoots` 以及 `wait_task` 的精简投影。另有测试覆盖陈旧锁恢复、CLI banner 噪音、坏 JSON 失败和三种 Node 运行时分支。
 
 `test/task-features.test.mjs` 覆盖幂等重发与冲突、设置变更及重启后的幂等保护、满队列重发、分页筛选与摘要限制、历史上限及运行任务保护、精简等待结果，以及新旧 MCP 协议的结构化返回兼容性。这些测试使用临时目录和本地 CLI fixture，不调用模型。
 
@@ -210,7 +214,7 @@ test/               集成测试和 CLI fixture
 - **页面无法连接**：确认插件已启用；页面会自动重连。更新插件代码后，运行 `npm run build` 并重启 Harness，以载入新版本。
 - **找不到 CLI**：在设置中填入官方 `dsh.cmd`、`DeepSeek Harness.exe` 或 `DSH Desktop.exe` 的绝对路径。
 - **供应商未注册或鉴权失败**：检查设置中的供应商文件和模型路由，以及 Harness 已保存的对应凭据。错误会保留在任务日志里。
-- **服务已在运行**：同一数据目录只能启用一个实例。正常退出旧实例后重试；不要在进程仍运行时手动删除锁目录。
+- **服务已在运行**：同一数据目录只能启用一个实例。正常退出旧实例后重试；崩溃残留的锁会在 10 秒宽限期后自动清理，刚崩溃时稍等再启动；不要在实例仍运行时手动删除锁目录。
 - **Codex 调到了其他 MCP 的同名工具**：如果同时使用 Codex++，它的 `codex_plus_collaboration` 也会暴露 `delegate_to_deepseek`、`wait_task` 等同名工具，且不会写入本插件队列。确认调用的是 `mcp__deepseek_delegate__*`；不需要 Codex++ 的协作工具时，在 Codex 的 `config.toml` 里给对应 server 加 `enabled = false`。
 
 ```powershell
