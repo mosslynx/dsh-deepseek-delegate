@@ -108,7 +108,7 @@ export async function startServer(dir, { port = 0, launch, lockGraceMs = 10000 }
       try { launcher = resolveLauncher(manager.config.executable).detected; } catch (e) { launcherError = e.message; }
       try { routes = availableRoutes(manager.config); } catch (e) { providerError = e.message; }
       const { tasks, ...taskPage } = manager.listPage(pageOptions());
-      return result({ config: manager.settings(), tasks, taskPage, usage: manager.usageSummary(), launcher, launcherError, providerError, routes,
+      return result({ config: manager.settings(), tasks, taskPage, usage: manager.usageSummary(), launcher, launcherError, providerError, routes, storageWarnings: manager.storageWarnings,
         version: VERSION, startedAt, pid: process.pid, dataDir: dir, integration: integrationConfig(dir) });
     }
     if (method === 'GET' && pathname === '/api/ping') return result({ ok: true, pid: process.pid });

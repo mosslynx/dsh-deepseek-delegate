@@ -128,7 +128,7 @@ MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。�
 
 ### 历史保留
 
-在管理页面的“已结束任务保留数”设置 `historyLimit`，范围 0–10000，默认 1000，0 表示不限。启动、任务状态持久化或保存设置时会保留最近结束的指定条数，超出的较旧记录会从 `tasks.json` 和任务列表中移除，包括其回答、日志与幂等键。排队、运行中以及进程仍在退出的任务不计入该上限，也不会被清理。
+在管理页面的“已结束任务保留数”设置 `historyLimit`，范围 0–10000，默认 1000，0 表示不限。启动、任务状态持久化或保存设置时会保留最近结束的指定条数，超出的较旧记录会从 `tasks/` 和任务列表中移除，包括其回答、日志与幂等键。排队、运行中以及进程仍在退出的任务不计入该上限，也不会被清理。
 
 旧配置中没有此字段时也使用默认值；升级前如果需要完整保留已有记录，可先在 `config.json` 加入 `"historyLimit": 0`。要长期保存记录，请备份数据目录。界面 Token 汇总只统计当前仍保留的记录，不作为全量历史账单；清理不会删除 Harness 原生会话，也不会更改任务曾经修改过的工作文件。
 
@@ -154,16 +154,20 @@ MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。�
 - 重试会新建一个任务并返回新的任务 ID。原任务的状态、回答和日志保持不变，重试任务用 `retryOf` 指向原任务，用 `attempt` 记录尝试次数（原任务为 1，第一次重试为 2）。
 - 新任务复制原任务的执行快照：提示、`cwd`、`modelRoute`、思考强度、`permissionMode`、超时和供应商设置都取自原任务，而不是当前设置。提示来自已持久化的记录，因此是脱敏后的文本。
 - 重试始终是一次全新的执行尝试：它不会带上原任务的 `sessionId`，也不会用 `continueTaskId` 续聊。
-- 重试关系写入 `tasks.json`，重启后仍可在任务详情里看到来源和尝试次数。
+- 重试关系写入任务记录 `tasks/<id>.json`，重启后仍可在任务详情里看到来源和尝试次数。
 
 ## 数据与连接
 
 默认数据目录是 `~/.dsh/deepseek-delegate`，可用 `DEEPSEEK_MCP_DATA` 修改。插件和 MCP 需要使用同一目录。
 
 - `config.json`：委派设置，包括默认超时和可选的 `allowedRoots` 工作区允许列表。
-- `tasks.json`：任务及结果，包含提示、回答、`partialAnswer`、执行日志、Harness Token 用量、`errorCode`，以及续聊/续跑/重试关系（`continueTaskId`、`retryOf`、`attempt`）。
+- `meta.json`：存储版本，当前 `{"schemaVersion":2}`。
+- `tasks/<id>.json`：每个任务一条完整记录，包含提示、回答、`partialAnswer`、执行日志、Harness Token 用量、`errorCode`，以及续聊/续跑/重试关系（`continueTaskId`、`retryOf`、`attempt`）。
+- `tasks.json.bak-<时间戳>`：旧版单文件任务的迁移备份；迁移成功后不再更新。
 - `runtime.json`：运行时本地地址和随机连接令牌，关闭插件时清理。
 - `server.lock/`：防止同一数据目录被重复使用。
+
+首次启动会自动把旧 `tasks.json` 迁移到 `tasks/`，成功后把旧文件改名为 `tasks.json.bak-*`，不会删除。迁移失败会保留原文件并拒绝启动；损坏的单个任务文件会被隔离为 `tasks/<id>.corrupt-*` 后跳过。
 
 `usage.totalTokens` 是累计处理量，包含缓存读取；`usage.billableTokens` 才是输入加输出的新增 Token，界面和侧边栏汇总使用后者。`allowedRoots` 为空时不限制工作目录；非空时 `delegate`、`resume` 和 `retry` 的目录必须落在其中一个根目录下。
 
@@ -178,7 +182,7 @@ npm test
 
 CI 在 Windows + Node 24 上运行 `npm ci`、`npm test`、`npm run build`，并用 `git diff --ignore-space-at-eol --exit-code -- lib` 校验构建产物；不跑 lifecycle/smoke。
 
-测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。`test/retry.test.mjs` 另外覆盖：失败和中断任务可手动重试、其他状态被拒绝且不启动进程、重试复制执行快照、重试不继承原会话、重试关系持久化重启后仍可见，以及 `retry_task` 在 MCP 与面板接口上的一致性。`test/timeout-resume.test.mjs` 覆盖按任务超时、超时状态与 `partialAnswer`、原会话续跑、续跑拒绝与幂等、3 秒落盘、`allowedRoots` 以及 `wait_task` 的精简投影。另有测试覆盖陈旧锁恢复、CLI banner 噪音、坏 JSON 失败和三种 Node 运行时分支。
+测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。`test/retry.test.mjs` 另外覆盖：失败和中断任务可手动重试、其他状态被拒绝且不启动进程、重试复制执行快照、重试不继承原会话、重试关系持久化重启后仍可见，以及 `retry_task` 在 MCP 与面板接口上的一致性。`test/timeout-resume.test.mjs` 覆盖按任务超时、超时状态与 `partialAnswer`、原会话续跑、续跑拒绝与幂等、3 秒落盘、`allowedRoots` 以及 `wait_task` 的精简投影。另有测试覆盖陈旧锁恢复、CLI banner 噪音、坏 JSON 失败和三种 Node 运行时分支。`test/storage.test.mjs` 覆盖旧 `tasks.json` 迁移、迁移中断恢复、损坏文件隔离、schemaVersion 拒绝、历史上限删除、增量写和 1000 任务加载。
 
 `test/task-features.test.mjs` 覆盖幂等重发与冲突、设置变更及重启后的幂等保护、满队列重发、分页筛选与摘要限制、历史上限及运行任务保护、精简等待结果，以及新旧 MCP 协议的结构化返回兼容性。这些测试使用临时目录和本地 CLI fixture，不调用模型。
 

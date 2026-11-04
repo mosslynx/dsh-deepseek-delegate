@@ -19,6 +19,15 @@ function directory(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
+function taskFiles(dir) {
+  return fs.readdirSync(path.join(dir, 'tasks')).filter(name => name.endsWith('.json')).sort()
+    .map(name => path.join(dir, 'tasks', name));
+}
+function storedTasks(dir) {
+  return taskFiles(dir).map(file => JSON.parse(fs.readFileSync(file, 'utf8')))
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+}
+function storedTaskText(dir) { return taskFiles(dir).map(file => fs.readFileSync(file, 'utf8')).join('\n'); }
 function launcher(mode, launches = []) {
   return (config, overlay, session) => {
     launches.push({ config, session });
@@ -63,7 +72,7 @@ test('idempotent dispatch survives settings changes and restart without exposing
     assert.equal('requestFingerprint' in task, false);
     assert.equal('config' in task, false);
   }
-  const persisted = fs.readFileSync(path.join(m.dir, 'tasks.json'), 'utf8');
+  const persisted = storedTaskText(m.dir);
   assert.equal(persisted.includes('sk-abcdefghijklmnop'), false);
   assert.equal(persisted.includes('request:one'), false);
   assert.match(persisted, /requestFingerprint/);
@@ -147,9 +156,10 @@ test('history retention keeps recently ended tasks and protects active and drain
   ];
   // Protect a cancelled task until its owned process actually exits.
   m.children.set('draining', {}); m.children.set('running', {});
+  m.persist();
   m.settings({ historyLimit: 2 });
   assert.deepEqual(m.tasks.map(task => task.id), ['long-running-recently-ended', 'newer', 'queued', 'draining', 'running']);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(m.dir, 'tasks.json'))).map(task => task.id), m.tasks.map(task => task.id));
+  assert.deepEqual(storedTasks(m.dir).map(task => task.id), m.tasks.map(task => task.id));
   assert.throws(() => m.get('old'), /任务不存在/);
   m.children.clear();
   // Do not launch the fabricated queue during test teardown.
@@ -185,7 +195,7 @@ test('history is pruned after completion and its idempotency key expires with th
   assert.notEqual(repeated.id, first.id);
   await finish(m, repeated.id);
   assert.equal(launches.length, 3);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(m.dir, 'tasks.json'))).map(task => task.id), [repeated.id]);
+  assert.deepEqual(storedTasks(m.dir).map(task => task.id), [repeated.id]);
 });
 
 test('startup retention applies to old configuration while recovering interrupted work', async t => {
@@ -193,6 +203,9 @@ test('startup retention applies to old configuration while recovering interrupte
   const seed = new TaskManager(dir, { launch: launcher('ok') });
   const tasks = Array.from({ length: 1002 }, (_, i) => savedTask(`old-${i}`, seed.config));
   tasks.push(savedTask('unfinished', seed.config, { status: 'running', endedAt: undefined }));
+  await seed.close();
+  fs.rmSync(path.join(dir, 'meta.json'), { force: true });
+  fs.rmSync(path.join(dir, 'tasks'), { recursive: true, force: true });
   fs.writeFileSync(path.join(dir, 'tasks.json'), JSON.stringify(tasks));
   const recovered = new TaskManager(dir, { launch: launcher('ok') });
   t.after(() => recovered.close());
@@ -292,7 +305,7 @@ async function bridge(t, dir, version) {
   });
   const init = await rpc('initialize', { protocolVersion: version });
   assert.equal(init.result.protocolVersion, version);
-  assert.equal(init.result.serverInfo.version, '1.2.0');
+  assert.equal(init.result.serverInfo.version, '1.3.0');
   return rpc;
 }
 

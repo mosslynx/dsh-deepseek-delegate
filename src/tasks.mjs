@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { StringDecoder } from 'node:string_decoder';
 import { atomicJSON, loadJSON, validateConfig, DEFAULTS, redact } from './config.mjs';
 import { buildOverlay, spawnHarness, stopTree } from './harness.mjs';
+import { TaskStore } from './store.mjs';
 
 export const ACTIVE = new Set(['queued', 'running']);
 export const TASK_STATUSES = ['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'];
@@ -74,7 +75,11 @@ export class TaskManager extends EventEmitter {
     this.persistDelayMs = persistDelayMs; this.stopGraceMs = stopGraceMs; this.persistTimer = null;
     fs.mkdirSync(dir, { recursive: true });
     this.config = validateConfig(loadJSON(path.join(dir, 'config.json'), DEFAULTS));
-    this.tasks = loadJSON(path.join(dir, 'tasks.json'), []);
+    this.store = new TaskStore(dir);
+    this.tasks = this.store.load();
+    this.tasks.forEach((task, index) => { if (!Number.isSafeInteger(task.seq)) task.seq = index; });
+    this.dirty = new Set();
+    const recovered = [];
     for (const t of this.tasks) {
       if (t.usage) t.usage = normalizeUsage(t.usage);
       if (!t.contextUsage) t.contextUsage = null;
@@ -84,41 +89,57 @@ export class TaskManager extends EventEmitter {
       if (!t.errorCode && t.status === 'failed' && /^运行超时/.test(t.error || '')) t.errorCode = 'timeout';
       if (!ACTIVE.has(t.status)) continue;
       t.status = 'interrupted'; t.errorCode = 'interrupted'; t.error = '服务重启，任务状态不确定。请检查工作目录后再决定是否重新派发。'; t.endedAt = new Date().toISOString();
+      recovered.push(t);
     }
-    this.persist();
+    this.pruneHistory();
+    this.nextSeq = this.tasks.length ? Math.max(...this.tasks.map(task => task.seq)) + 1 : 0;
+    for (const t of recovered) this.store.writeTask(t);
   }
   persist() {
     if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
+    this.pruneHistory();
+    this.store.writeAll(this.tasks);
+    this.dirty.clear();
+  }
+  pruneHistory() {
     // Active tasks and children that are still draining never count against the
     // history limit. Keep the most recently ended tasks, not just newest IDs.
-    let retained = this.tasks;
-    if (this.config.historyLimit) {
-      const history = this.tasks.map((task, index) => ({ task, index }))
-        .filter(({ task }) => !ACTIVE.has(task.status) && !this.children.has(task.id))
-        .sort((a, b) => String(b.task.endedAt || b.task.createdAt).localeCompare(String(a.task.endedAt || a.task.createdAt)) || b.index - a.index);
-      const remove = new Set(history.slice(this.config.historyLimit).map(({ task }) => task.id));
-      retained = this.tasks.filter(task => !remove.has(task.id));
-    }
-    atomicJSON(path.join(this.dir, 'tasks.json'), retained);
-    this.tasks = retained;
+    if (!this.config.historyLimit) return;
+    const history = this.tasks.map((task, index) => ({ task, index }))
+      .filter(({ task }) => !ACTIVE.has(task.status) && !this.children.has(task.id))
+      .sort((a, b) => String(b.task.endedAt || b.task.createdAt).localeCompare(String(a.task.endedAt || a.task.createdAt)) || b.index - a.index);
+    const remove = new Set(history.slice(this.config.historyLimit).map(({ task }) => task.id));
+    if (!remove.size) return;
+    for (const id of remove) this.store.deleteTask(id);
+    this.tasks = this.tasks.filter(task => !remove.has(task.id));
   }
   // Event/usage/answer updates are frequent; persist at most once per interval.
   // State transitions still persist immediately through changed().
-  schedulePersist() {
+  schedulePersist(task) {
+    if (!task?.id) return;
+    this.dirty.add(task.id);
     if (this.closing || this.persistTimer) return;
-    this.persistTimer = setTimeout(() => { this.persistTimer = null; this.persist(); }, this.persistDelayMs);
+    this.persistTimer = setTimeout(() => { this.persistTimer = null; this.flushDirty(); }, this.persistDelayMs);
     this.persistTimer.unref?.();
   }
+  flushDirty() {
+    for (const id of this.dirty) {
+      const task = this.tasks.find(item => item.id === id);
+      if (task) this.store.writeTask(task);
+    }
+    this.dirty.clear();
+  }
   changed(t, persist = true) {
-    if (persist) this.persist();
+    if (persist && t) { this.store.writeTask(t); this.pruneHistory(); }
     this.emit('change', t?.id);
   }
   settings(input) {
     if (!input) return this.config;
     const next = validateConfig({ ...this.config, ...input });
     atomicJSON(path.join(this.dir, 'config.json'), next); this.config = next;
-    this.persist(); this.emit('change'); this.pump(); return next;
+    this.pruneHistory(); this.emit('change'); this.pump(); return next;
   }
+  get storageWarnings() { return this.store?.warnings || []; }
   get(id) { const t = this.tasks.find(t => t.id === id); if (!t) throw new Error('任务不存在'); return t; }
   list() { return [...this.tasks].reverse().map(t => this.taskSummary(t)); }
   taskSummary(task) {
@@ -261,7 +282,7 @@ export class TaskManager extends EventEmitter {
     if (!allowed) throw new Error('工作目录不在允许范围内');
   }
   create({ prompt, config, sessionId = null, continueTaskId = null, retryOf = null, attempt = 1, idempotencyKeyHash, requestFingerprint }) {
-    const t = { id: randomUUID(), prompt: redact(prompt), cwd: config.cwd, modelRoute: config.modelRoute,
+    const t = { id: randomUUID(), seq: this.nextSeq++, prompt: redact(prompt), cwd: config.cwd, modelRoute: config.modelRoute,
       reasoningEffort: config.reasoningEffort,
       permissionMode: config.permissionMode, status: 'queued', createdAt: new Date().toISOString(),
       continueTaskId, sessionId, answer: '', stderr: '', events: [], config,
@@ -279,7 +300,7 @@ export class TaskManager extends EventEmitter {
     return Boolean(t.sessionId) && (t.status === 'interrupted' || (t.status === 'failed' && t.errorCode === 'timeout'));
   }
   publicTask(t) {
-    const { config, idempotencyKeyHash, requestFingerprint, ...visible } = t;
+    const { config, idempotencyKeyHash, requestFingerprint, seq, ...visible } = t;
     return {
       ...visible,
       timeoutSeconds: config?.timeoutSeconds ?? this.config.timeoutSeconds,
@@ -311,7 +332,7 @@ export class TaskManager extends EventEmitter {
   event(t, type, text) {
     t.events.push({ at: new Date().toISOString(), type, text: redact(text).slice(0, 4000) });
     if (t.events.length > 250) t.events.shift();
-    this.schedulePersist();
+    this.schedulePersist(t);
     this.emit('change', t.id);
   }
   pump() {
@@ -361,9 +382,9 @@ export class TaskManager extends EventEmitter {
       if (ev.type === 'session') t.sessionId = ev.sessionId || ev.session_id || t.sessionId;
       const usageEvent = ev.usage ?? ev.result?.usage ?? ev.data?.usage ?? ev.update?.usage ?? ev.reason?.usage ?? ev.event?.usage ?? (ev.type === 'usage' ? ev : null);
       const usage = normalizeUsage(usageEvent);
-      if (usage) { t.usage = addUsage(t.usage, usage); this.schedulePersist(); this.emit('change', t.id); }
+      if (usage) { t.usage = addUsage(t.usage, usage); this.schedulePersist(t); this.emit('change', t.id); }
       const contextUsage = normalizeContextUsage(ev.sessionUpdate === 'usage_update' || ev.type === 'usage_update' ? ev : null);
-      if (contextUsage) { t.contextUsage = contextUsage; this.schedulePersist(); this.emit('change', t.id); }
+      if (contextUsage) { t.contextUsage = contextUsage; this.schedulePersist(t); this.emit('change', t.id); }
       if (ev.type === 'text') this.event(t, 'text', ev.text || '');
       if (ev.type === 'tool_call') this.event(t, 'tool', ev.name || ev.toolName || ev.tool?.name || '工具调用');
       if (ev.type === 'status') {
@@ -374,7 +395,7 @@ export class TaskManager extends EventEmitter {
       if (ev.type === 'final') {
         if (typeof ev.text !== 'string') failure ||= 'CLI final 事件没有文本';
         else if (Buffer.byteLength(ev.text) > 262144) failure ||= '最终回答超过 256 KiB';
-        else { final = redact(ev.text); t.answer = final; this.schedulePersist(); this.emit('change', t.id); }
+        else { final = redact(ev.text); t.answer = final; this.schedulePersist(t); this.emit('change', t.id); }
       }
       if (ev.type === 'error') failure ||= ev.message || ev.error?.message || 'CLI 返回错误';
     };

@@ -16,6 +16,11 @@ function directory(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
+function storedTasks(dir) {
+  return fs.readdirSync(path.join(dir, 'tasks')).filter(name => name.endsWith('.json'))
+    .map(name => JSON.parse(fs.readFileSync(path.join(dir, 'tasks', name), 'utf8')))
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+}
 
 function launcherFor(modes, sessions) {
   return (_config, _overlay, session) => {
@@ -66,6 +71,9 @@ test('per-task timeout overrides the manager default and rejects invalid values'
 test('legacy timeout records are recognized on load', async t => {
   const dir = directory(t);
   const seed = new TaskManager(dir, { launch: launcherFor([], []) });
+  await seed.close();
+  fs.rmSync(path.join(dir, 'meta.json'), { force: true });
+  fs.rmSync(path.join(dir, 'tasks'), { recursive: true, force: true });
   const stored = {
     id: 'legacy-timeout', status: 'failed', error: '运行超时', sessionId: 'session-legacy',
     cwd: dir, modelRoute: seed.config.modelRoute, reasoningEffort: 'max', permissionMode: 'read-only',
@@ -160,7 +168,7 @@ test('scheduled persistence writes events before close', async t => {
   const task = await finish(manager, manager.delegate({ prompt: 'persist me' }).id);
   manager.event(manager.get(task.id), 'text', 'scheduled update');
   await new Promise(resolve => setTimeout(resolve, 80));
-  const stored = JSON.parse(fs.readFileSync(path.join(dir, 'tasks.json')));
+  const stored = storedTasks(dir);
   const row = stored.find(item => item.id === task.id);
   assert.ok(row.events.some(event => event.text === 'scheduled update'));
 });

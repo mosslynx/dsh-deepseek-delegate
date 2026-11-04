@@ -42,6 +42,11 @@ async function finish(manager, id) {
   }
   throw new Error('fixture did not finish');
 }
+function storedTasks(dir) {
+  return fs.readdirSync(path.join(dir, 'tasks')).filter(name => name.endsWith('.json'))
+    .map(name => JSON.parse(fs.readFileSync(path.join(dir, 'tasks', name), 'utf8')))
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+}
 
 test('failed task retries as a new attempt that copies the snapshot and starts a fresh session', async t => {
   const { manager, sessions, modes } = harness(t);
@@ -77,7 +82,7 @@ test('failed task retries as a new attempt that copies the snapshot and starts a
   assert.deepEqual(sessions, [null, null]);
   assert.ok(done.sessionId);
   assert.notEqual(done.sessionId, failed.sessionId);
-  const stored = JSON.parse(fs.readFileSync(path.join(manager.dir, 'tasks.json')));
+  const stored = storedTasks(manager.dir);
   assert.equal(stored.find(task => task.id === retry.id).retryOf, failed.id);
   assert.equal(stored.find(task => task.id === failed.id).status, 'failed');
 });
@@ -87,6 +92,9 @@ test('interrupted tasks stay retryable after a restart and the retry relation is
   const first = new TaskManager(dir, { launch: () => { throw new Error('unused'); } });
   first.settings({ cwd: dir, reuseProviders: false });
   const config = first.config, now = new Date().toISOString();
+  await first.close();
+  fs.rmSync(path.join(dir, 'meta.json'), { force: true });
+  fs.rmSync(path.join(dir, 'tasks'), { recursive: true, force: true });
   // A task that was running when the plugin died is rewritten to `interrupted`.
   fs.writeFileSync(path.join(dir, 'tasks.json'), JSON.stringify([{
     id: 'task-interrupted', prompt: '重启后继续', cwd: config.cwd, modelRoute: config.modelRoute,

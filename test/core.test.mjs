@@ -57,6 +57,11 @@ async function finish(m, id) {
   for (let i = 0; i < 10; i++) { const task = await m.wait(id, 1000); if (!['running', 'queued'].includes(task.status)) return task; }
   throw new Error('fixture did not finish');
 }
+function storedTasks(dir) {
+  return fs.readdirSync(path.join(dir, 'tasks')).filter(name => name.endsWith('.json'))
+    .map(name => JSON.parse(fs.readFileSync(path.join(dir, 'tasks', name), 'utf8')))
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+}
 
 test('literal prompt, Unicode result, native session continuation and stored results', async t => {
   const sessions = [], m = manager(t, 'ok', sessions);
@@ -68,7 +73,7 @@ test('literal prompt, Unicode result, native session continuation and stored res
   assert.equal('config' in m.list()[0], false);
   m.settings({ modelRoute: 'other/model' });
   assert.throws(() => m.delegate({ prompt: 'x', continueTaskId: a.id }), /模型路由/);
-  const stored = JSON.parse(fs.readFileSync(path.join(m.dir, 'tasks.json')));
+  const stored = storedTasks(m.dir);
   assert.equal(stored[0].answer, a.answer);
 });
 
@@ -80,7 +85,7 @@ test('records and exposes Harness token usage', async t => {
   assert.deepEqual(result.usage, exposed);
   assert.deepEqual(m.list()[0].usage, exposed);
   assert.deepEqual(m.usageSummary(), { taskCount: 1, reportedTaskCount: 1, ...exposed });
-  const stored = JSON.parse(fs.readFileSync(path.join(m.dir, 'tasks.json')));
+  const stored = storedTasks(m.dir);
   assert.deepEqual(stored[0].usage, expected);
   const reloaded = new TaskManager(m.dir, { launch: launcher('usage') });
   t.after(() => reloaded.close());
