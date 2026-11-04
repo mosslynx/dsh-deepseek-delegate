@@ -65,7 +65,7 @@ npm run config
 ```toml
 [mcp_servers.deepseek_delegate]
 command = "node"
-args = ["/absolute/path/to/dsh-deepseek-delegate/src/cli.mjs", "mcp"]
+args = ["/absolute/path/to/dsh-deepseek-delegate/lib/cli.js", "mcp"]
 startup_timeout_sec = 30
 tool_timeout_sec = 60
 
@@ -173,7 +173,7 @@ npm run test:smoke
 
 真实冒烟测试要求 Harness 正在运行并已启用本插件，会使用当前模型供应商额度。它验证 MCP 派发、会话记忆续聊、取消和共享任务列表；测试提示要求不调用工具和不访问文件。
 
-修改后重新构建，并重启 Harness 载入 Host/Client 新代码。项目包含构建后的 `lib/client.js`，但开发依赖仍需安装。
+修改后重新构建，并重启 Harness 载入 Host/Client 新代码。项目包含构建后的 `lib/client.js`（侧边栏）、`lib/plugin.js`（Host 入口）和 `lib/cli.js`（MCP 入口，已内联 `yaml`），因此直接复制目录即可运行，无需安装依赖；开发依赖仍需安装。
 
 ```text
 src/plugin.mjs       Harness 插件生命周期
@@ -189,6 +189,7 @@ test/               集成测试和 CLI fixture
 ## 故障排查与卸载
 
 - **cannot resolve profile bundle**：确认安装已经成功结束、项目目录仍存在。用 Harness 内的插件管理重新安装，或运行 `npm run plugin:install` 修复链接，然后重启 Harness。
+- **Cannot find package 'yaml'**：旧版本从 zip 或目录链接安装时缺少运行时依赖。更新到包含 `lib/plugin.js` 与 `lib/cli.js` 的版本后重新安装；或在插件目录运行 `npm ci` 临时修复。
 - **页面无法连接**：确认插件已启用；页面会自动重连。更新插件代码后，运行 `npm run build` 并重启 Harness，以载入新版本。
 - **找不到 CLI**：在设置中填入官方 `dsh.cmd`、`DeepSeek Harness.exe` 或 `DSH Desktop.exe` 的绝对路径。
 - **供应商未注册或鉴权失败**：检查设置中的供应商文件和模型路由，以及 Harness 已保存的对应凭据。错误会保留在任务日志里。

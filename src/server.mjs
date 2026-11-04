@@ -17,7 +17,10 @@ function nodeCommand() {
 }
 export function integrationConfig(dir) {
   const command = nodeCommand();
-  const entry = path.join(ROOT, 'src/cli.mjs').replaceAll('\\', '/');
+  // Prefer the bundled MCP entry: a linked install (cloned or unzipped folder)
+  // has no node_modules, so src/cli.mjs cannot resolve the yaml dependency.
+  const bundled = path.join(ROOT, 'lib/cli.js');
+  const entry = (fs.existsSync(bundled) ? bundled : path.join(ROOT, 'src/cli.mjs')).replaceAll('\\', '/');
   const env = { DEEPSEEK_MCP_DATA: dir.replaceAll('\\', '/') };
   return {
     toml: `[mcp_servers.deepseek_delegate]\ncommand = ${JSON.stringify(command)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 60\n\n[mcp_servers.deepseek_delegate.env]\nDEEPSEEK_MCP_DATA = ${JSON.stringify(env.DEEPSEEK_MCP_DATA)}\n`,

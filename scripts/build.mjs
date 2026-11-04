@@ -14,3 +14,17 @@ await build({
   footer: { js: 'return module.exports;}});' },
 });
 console.log('Built lib/client.js');
+
+// The plugin runs from whatever directory the user installed it into. A plain
+// `link:` install (zip or cloned directory) never gets node_modules, so bundle
+// runtime dependencies such as yaml into the host and MCP entries.
+for (const [entry, outfile] of [['src/plugin.mjs', 'lib/plugin.js'], ['src/cli.mjs', 'lib/cli.js']]) {
+  await build({
+    entryPoints: [path.join(ROOT, entry)],
+    outfile: path.join(ROOT, outfile),
+    bundle: true, format: 'esm', platform: 'node', target: 'es2022', packages: 'bundle',
+    // yaml's CommonJS branch calls require() for node builtins at runtime.
+    banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
+  });
+  console.log(`Built ${outfile}`);
+}
